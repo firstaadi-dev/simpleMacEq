@@ -1,0 +1,49 @@
+# ---- macOS ----
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+
+# ---- Xcode ----
+# Build products / derived data
+build/
+DerivedData/
+*.xcuserstate
+*.xcuserdatad
+
+# Per-user Xcode data (keep shared schemes & settings)
+xcuserdata/
+**/xcuserdata/
+
+# Xcode misc
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+*.swiftpm/.build
+.swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
+
+# Swift Package Manager
+.build/
+Packages/
+Package.pins
+.netrc
+
+# ---- IDEs / editors ----
+.idea/
+*.iml
+*.swp
+*~
+
+# ---- Claude Code (local, machine-specific) ----
+.claude/settings.local.json
+
+# ---- App debug artifacts ----
+maceq-debug.log
+
+# ---- Internal design & planning docs (not for public repo) ----
+Mac Equalizer.html
+CONTEXT.md
+docs/
