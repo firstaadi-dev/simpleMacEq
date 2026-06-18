@@ -108,8 +108,8 @@ final class OutputDeviceManager: ObservableObject {
     // MARK: - Property listeners
 
     private func installListeners() {
-        var devicesAddr = Self.address(kAudioHardwarePropertyDevices)
-        var defaultAddr = Self.address(kAudioHardwarePropertyDefaultOutputDevice)
+        var devicesAddr = CoreAudioHelpers.address(kAudioHardwarePropertyDevices)
+        var defaultAddr = CoreAudioHelpers.address(kAudioHardwarePropertyDefaultOutputDevice)
 
         AudioObjectAddPropertyListenerBlock(system, &devicesAddr, DispatchQueue.main) { [weak self] _, _ in
             MainActor.assumeIsolated { self?.refresh() }
@@ -122,13 +122,6 @@ final class OutputDeviceManager: ObservableObject {
     }
 
     // MARK: - Core Audio helpers
-
-    private static func address(_ selector: AudioObjectPropertySelector,
-                               scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeGlobal)
-        -> AudioObjectPropertyAddress {
-        AudioObjectPropertyAddress(mSelector: selector, mScope: scope,
-                                   mElement: kAudioObjectPropertyElementMain)
-    }
 
     // Volume lives on the main element on most devices, or per-channel (1, 2) on others.
     private static let volumeElements: [AudioObjectPropertyElement] =
@@ -199,7 +192,7 @@ final class OutputDeviceManager: ObservableObject {
 
     private static func outputDevices() -> [AudioOutputDevice] {
         let sys = AudioObjectID(kAudioObjectSystemObject)
-        var addr = address(kAudioHardwarePropertyDevices)
+        var addr = CoreAudioHelpers.address(kAudioHardwarePropertyDevices)
         var size: UInt32 = 0
         guard AudioObjectGetPropertyDataSize(sys, &addr, 0, nil, &size) == noErr else { return [] }
         let count = Int(size) / MemoryLayout<AudioDeviceID>.size
@@ -209,33 +202,22 @@ final class OutputDeviceManager: ObservableObject {
 
         return ids.compactMap { id in
             guard hasOutputStreams(id) else { return nil }
-            let name = stringProperty(id, kAudioObjectPropertyName) ?? "Unknown Device"
-            let uid = stringProperty(id, kAudioDevicePropertyDeviceUID) ?? ""
+            let name = CoreAudioHelpers.stringProperty(id, kAudioObjectPropertyName) ?? "Unknown Device"
+            let uid = CoreAudioHelpers.stringProperty(id, kAudioDevicePropertyDeviceUID) ?? ""
             return AudioOutputDevice(id: id, name: name, uid: uid)
         }
     }
 
     private static func hasOutputStreams(_ id: AudioDeviceID) -> Bool {
-        var addr = address(kAudioDevicePropertyStreams, scope: kAudioObjectPropertyScopeOutput)
+        var addr = CoreAudioHelpers.address(kAudioDevicePropertyStreams,
+                                            scope: kAudioObjectPropertyScopeOutput)
         var size: UInt32 = 0
         guard AudioObjectGetPropertyDataSize(id, &addr, 0, nil, &size) == noErr else { return false }
         return size > 0
     }
 
-    private static func stringProperty(_ id: AudioDeviceID,
-                                       _ selector: AudioObjectPropertySelector) -> String? {
-        var addr = address(selector)
-        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
-        var result: Unmanaged<CFString>?
-        let status = withUnsafeMutablePointer(to: &result) {
-            AudioObjectGetPropertyData(id, &addr, 0, nil, &size, $0)
-        }
-        guard status == noErr, let cf = result else { return nil }
-        return cf.takeRetainedValue() as String
-    }
-
     static func defaultOutputDeviceID() -> AudioDeviceID? {
-        var addr = address(kAudioHardwarePropertyDefaultOutputDevice)
+        var addr = CoreAudioHelpers.address(kAudioHardwarePropertyDefaultOutputDevice)
         var id = AudioDeviceID(0)
         var size = UInt32(MemoryLayout<AudioDeviceID>.size)
         let status = AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject),
@@ -244,7 +226,7 @@ final class OutputDeviceManager: ObservableObject {
     }
 
     static func setDefaultOutputDevice(_ id: AudioDeviceID) {
-        var addr = address(kAudioHardwarePropertyDefaultOutputDevice)
+        var addr = CoreAudioHelpers.address(kAudioHardwarePropertyDefaultOutputDevice)
         var dev = id
         let size = UInt32(MemoryLayout<AudioDeviceID>.size)
         AudioObjectSetPropertyData(AudioObjectID(kAudioObjectSystemObject),

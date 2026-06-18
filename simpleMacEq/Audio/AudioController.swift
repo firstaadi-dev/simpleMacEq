@@ -320,7 +320,7 @@ final class AudioController: ObservableObject {
             .map { node in
                 AudioProcessInfo(objectID: node.info.objectID, pid: node.info.pid,
                                  bundleID: node.info.bundleID, name: node.info.name,
-                                 symbol: "speaker.wave.2.fill", icon: node.info.icon,
+                                 icon: node.info.icon,
                                  volume: node.volume, isMuted: node.isMuted,
                                  eqEnabled: node.eqEnabled, eqBands: node.eqBands,
                                  outputDeviceID: node.deviceID,
@@ -533,12 +533,9 @@ final class AudioController: ObservableObject {
     /// output device or the device list changes (apps following the system output move;
     /// explicitly-routed apps re-resolve, falling back to the system output if their
     /// device disappeared).
+    // ponytail: rebuildEverything reuses teardown() instead of duplicating it
     private func rebuildEverything() {
-        for de in engines.values where de.engine.isRunning { de.engine.stop() }
-        engines.removeAll()
-        engineLevels.removeAll()
-        for node in taps.values { node.tap.stop() }
-        taps.removeAll()
+        teardown()
         syncTaps(with: monitor?.processes ?? [])
     }
 

@@ -10,7 +10,6 @@ struct AudioProcessInfo: Identifiable, Equatable {
     let pid: pid_t
     let bundleID: String
     let name: String
-    let symbol: String          // SF Symbol fallback when no app icon is available
     var icon: NSImage?
     var volume: Double           // 0...2 (above 1.0 = boost)
     var isMuted: Bool = false

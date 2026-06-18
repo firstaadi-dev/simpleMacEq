@@ -25,7 +25,7 @@ struct EQSectionView: View {
 
             HStack(alignment: .bottom, spacing: 4) {
                 ForEach($state.bands) { $band in
-                    BandSliderView(band: $band) { state.bandsEdited() }
+                    BandSliderView(gain: $band.gain, label: band.label) { state.bandsEdited() }
                 }
             }
             .frame(height: 168)

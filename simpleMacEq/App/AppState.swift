@@ -38,7 +38,7 @@ final class AppState: ObservableObject {
 
         var restored = Band.defaultBands()
         for i in restored.indices where i < loaded.bandGains.count {
-            restored[i].gain = loaded.bandGains[i].clamped(to: Band.gainRange)
+            restored[i].gain = min(max(loaded.bandGains[i], Band.gainRange.lowerBound), Band.gainRange.upperBound)
         }
         bands = restored
 
@@ -205,8 +205,3 @@ final class AppState: ObservableObject {
     }
 }
 
-private extension Comparable {
-    func clamped(to range: ClosedRange<Self>) -> Self {
-        min(max(self, range.lowerBound), range.upperBound)
-    }
-}

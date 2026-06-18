@@ -49,7 +49,7 @@ final class AudioProcessMonitor: ObservableObject {
 
         // Track per-process "is running output" so the list stays live.
         for obj in all where !listenedObjects.contains(obj) {
-            var addr = Self.address(kAudioProcessPropertyIsRunningOutput)
+            var addr = CoreAudioHelpers.address(kAudioProcessPropertyIsRunningOutput)
             AudioObjectAddPropertyListenerBlock(obj, &addr, DispatchQueue.main) { [weak self] _, _ in
                 MainActor.assumeIsolated { self?.refresh() }
             }
@@ -60,7 +60,7 @@ final class AudioProcessMonitor: ObservableObject {
             guard Self.boolProperty(obj, kAudioProcessPropertyIsRunningOutput) else { return nil }
             let pid = Self.pidProperty(obj)
             guard pid != ownPID else { return nil }
-            let caBundleID = Self.stringProperty(obj, kAudioProcessPropertyBundleID) ?? ""
+            let caBundleID = CoreAudioHelpers.stringProperty(obj, kAudioProcessPropertyBundleID) ?? ""
 
             // Audio often runs in a helper process (e.g. "Google Chrome Helper (Audio)").
             // Walk up the parent chain to the real owning app so we show "Google Chrome"
@@ -78,7 +78,7 @@ final class AudioProcessMonitor: ObservableObject {
     }
 
     private func installProcessListListener() {
-        var addr = Self.address(kAudioHardwarePropertyProcessObjectList)
+        var addr = CoreAudioHelpers.address(kAudioHardwarePropertyProcessObjectList)
         AudioObjectAddPropertyListenerBlock(system, &addr, DispatchQueue.main) { [weak self] _, _ in
             MainActor.assumeIsolated { self?.refresh() }
         }
@@ -124,16 +124,9 @@ final class AudioProcessMonitor: ObservableObject {
 
     // MARK: - Core Audio helpers
 
-    private static func address(_ selector: AudioObjectPropertySelector)
-        -> AudioObjectPropertyAddress {
-        AudioObjectPropertyAddress(mSelector: selector,
-                                   mScope: kAudioObjectPropertyScopeGlobal,
-                                   mElement: kAudioObjectPropertyElementMain)
-    }
-
     private static func processObjectIDs() -> [AudioObjectID] {
         let sys = AudioObjectID(kAudioObjectSystemObject)
-        var addr = address(kAudioHardwarePropertyProcessObjectList)
+        var addr = CoreAudioHelpers.address(kAudioHardwarePropertyProcessObjectList)
         var size: UInt32 = 0
         guard AudioObjectGetPropertyDataSize(sys, &addr, 0, nil, &size) == noErr else { return [] }
         let count = Int(size) / MemoryLayout<AudioObjectID>.size
@@ -145,7 +138,7 @@ final class AudioProcessMonitor: ObservableObject {
 
     private static func boolProperty(_ obj: AudioObjectID,
                                      _ selector: AudioObjectPropertySelector) -> Bool {
-        var addr = address(selector)
+        var addr = CoreAudioHelpers.address(selector)
         var value: UInt32 = 0
         var size = UInt32(MemoryLayout<UInt32>.size)
         guard AudioObjectGetPropertyData(obj, &addr, 0, nil, &size, &value) == noErr else { return false }
@@ -153,23 +146,10 @@ final class AudioProcessMonitor: ObservableObject {
     }
 
     private static func pidProperty(_ obj: AudioObjectID) -> pid_t {
-        var addr = address(kAudioProcessPropertyPID)
+        var addr = CoreAudioHelpers.address(kAudioProcessPropertyPID)
         var value: pid_t = -1
         var size = UInt32(MemoryLayout<pid_t>.size)
         guard AudioObjectGetPropertyData(obj, &addr, 0, nil, &size, &value) == noErr else { return -1 }
         return value
-    }
-
-    private static func stringProperty(_ obj: AudioObjectID,
-                                       _ selector: AudioObjectPropertySelector) -> String? {
-        var addr = address(selector)
-        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
-        var result: Unmanaged<CFString>?
-        let status = withUnsafeMutablePointer(to: &result) {
-            AudioObjectGetPropertyData(obj, &addr, 0, nil, &size, $0)
-        }
-        guard status == noErr, let cf = result else { return nil }
-        let value = cf.takeRetainedValue() as String
-        return value.isEmpty ? nil : value
     }
 }

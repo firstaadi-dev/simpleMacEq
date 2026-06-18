@@ -117,7 +117,8 @@ struct AppMixerRowView: View {
                 .frame(width: 26, height: 26)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
         } else {
-            Image(systemName: app.symbol)
+            // ponytail: was a yagni `symbol` field, always this value
+            Image(systemName: "speaker.wave.2.fill")
                 .font(.system(size: 14))
                 .foregroundStyle(Theme.accent)
                 .frame(width: 26, height: 26)
@@ -211,14 +212,16 @@ private struct PerAppEQView: View {
                     .foregroundStyle(Theme.textSecondary)
             }
 
+            // ponytail: reuse BandSliderView(compact:) instead of duplicate MiniBandSlider
             HStack(alignment: .bottom, spacing: 3) {
                 ForEach(0..<10, id: \.self) { i in
-                    MiniBandSlider(
+                    BandSliderView(
                         gain: Binding(
                             get: { app.eqBands.indices.contains(i) ? app.eqBands[i] : 0 },
                             set: { audio.setAppEQBand($0, bandIndex: i, forObjectID: app.objectID) }
                         ),
-                        label: Self.label(forBand: i)
+                        label: Band.label(forIndex: i),
+                        compact: true
                     )
                 }
             }
@@ -259,49 +262,5 @@ private struct PerAppEQView: View {
         .menuStyle(.borderlessButton)
         .fixedSize()
     }
-
-    private static func label(forBand i: Int) -> String {
-        let f = Band.isoCenters[i]
-        return f >= 1000 ? "\(Int(f / 1000))k" : "\(Int(f))"
-    }
 }
 
-/// A small vertical EQ slider for the per-app EQ (mirrors BandSliderView, compact).
-private struct MiniBandSlider: View {
-    @Binding var gain: Double
-    let label: String
-
-    var body: some View {
-        VStack(spacing: 4) {
-            GeometryReader { geo in
-                let range = Band.gainRange
-                let span = range.upperBound - range.lowerBound
-                let h = geo.size.height
-                let frac = (gain - range.lowerBound) / span
-                let thumbY = h * (1 - frac)
-
-                ZStack(alignment: .bottom) {
-                    Capsule().fill(Theme.trackInactive).frame(width: 3)
-                    Capsule().fill(Theme.accent).frame(width: 3, height: max(0, h * frac))
-                    Circle()
-                        .fill(Theme.accent)
-                        .frame(width: 10, height: 10)
-                        .position(x: geo.size.width / 2, y: thumbY)
-                }
-                .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { value in
-                            let f = max(0, min(1, 1 - value.location.y / h))
-                            gain = (range.lowerBound + f * span).rounded()
-                        }
-                )
-            }
-            .frame(maxWidth: .infinity)
-
-            Text(label)
-                .font(.system(size: 8, weight: .medium))
-                .foregroundStyle(Theme.textSecondary)
-        }
-    }
-}

@@ -15,6 +15,12 @@ struct Band: Identifiable, Equatable {
 
     static let isoCenters: [Double] = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
 
+    // ponytail: shared label helper (was duplicated in PerAppEQView)
+    static func label(forIndex i: Int) -> String {
+        let f = isoCenters[i]
+        return f >= 1000 ? "\(Int(f / 1000))k" : "\(Int(f))"
+    }
+
     static func defaultBands() -> [Band] {
         isoCenters.map { Band(frequency: $0, gain: 0) }
     }
