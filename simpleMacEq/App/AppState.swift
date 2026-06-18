@@ -136,6 +136,19 @@ final class AppState: ObservableObject {
         settings.save()
     }
 
+    /// Explicit output device UID for an app, or nil to follow the system output.
+    func appOutputDeviceUID(for bundleID: String) -> String? {
+        guard !bundleID.isEmpty else { return nil }
+        return settings.appOutputDeviceUID[bundleID]
+    }
+
+    func setAppOutputDeviceUID(_ uid: String?, for bundleID: String) {
+        guard !bundleID.isEmpty else { return }
+        if let uid { settings.appOutputDeviceUID[bundleID] = uid }
+        else { settings.appOutputDeviceUID[bundleID] = nil }
+        settings.save()
+    }
+
     // MARK: - Launch at login
 
     private func syncLaunchAtLogin(to enabled: Bool, persist: Bool) {

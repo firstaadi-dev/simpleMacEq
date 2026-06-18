@@ -87,8 +87,11 @@ struct AppMixerRowView: View {
             }
 
             if expanded {
-                PerAppEQView(app: app)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+                VStack(spacing: 8) {
+                    OutputRoutePicker(app: app)
+                    PerAppEQView(app: app)
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
     }
@@ -120,6 +123,63 @@ struct AppMixerRowView: View {
                 .frame(width: 26, height: 26)
                 .background(Theme.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
         }
+    }
+}
+
+/// Per-app output device routing — send one app's audio to a different device.
+private struct OutputRoutePicker: View {
+    let app: AudioProcessInfo
+    @EnvironmentObject var audio: AudioController
+    @EnvironmentObject var outputs: OutputDeviceManager
+
+    private var currentLabel: String {
+        if let uid = app.explicitOutputUID,
+           let device = outputs.devices.first(where: { $0.uid == uid }) {
+            return device.name
+        }
+        return "System Default"
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "hifispeaker")
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.textSecondary)
+            Text("Output")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Theme.textSecondary)
+            Spacer()
+            Menu {
+                Button {
+                    audio.setAppOutputDevice(nil, forObjectID: app.objectID)
+                } label: {
+                    if app.explicitOutputUID == nil { Label("System Default", systemImage: "checkmark") }
+                    else { Text("System Default") }
+                }
+                Divider()
+                ForEach(outputs.devices) { device in
+                    Button {
+                        audio.setAppOutputDevice(device.uid, forObjectID: app.objectID)
+                    } label: {
+                        if app.explicitOutputUID == device.uid { Label(device.name, systemImage: "checkmark") }
+                        else { Text(device.name) }
+                    }
+                }
+            } label: {
+                HStack(spacing: 3) {
+                    Text(currentLabel)
+                        .font(.system(size: 11, weight: .medium))
+                        .lineLimit(1)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 8))
+                }
+                .foregroundStyle(Theme.accent)
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+        }
+        .padding(10)
+        .background(Theme.background.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
     }
 }
 

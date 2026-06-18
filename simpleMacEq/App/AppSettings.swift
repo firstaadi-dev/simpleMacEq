@@ -12,6 +12,7 @@ struct AppSettings: Codable, Equatable {
     var appMutes: [String: Bool] = [:]
     var appEQBands: [String: [Double]] = [:]   // per-app 10-band gains, keyed by bundle ID
     var appEQEnabled: [String: Bool] = [:]
+    var appOutputDeviceUID: [String: String] = [:]  // per-app output device UID (absent = follow system)
     var volumeBoostEnabled: Bool = false       // allow per-app volume above 100%
     var launchAtLogin: Bool = false
 

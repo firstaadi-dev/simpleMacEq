@@ -16,6 +16,8 @@ struct AudioProcessInfo: Identifiable, Equatable {
     var isMuted: Bool = false
     var eqEnabled: Bool = false
     var eqBands: [Double] = Array(repeating: 0, count: 10)   // per-app EQ, dB
+    var outputDeviceID: AudioDeviceID = 0          // device this app is currently routed to
+    var explicitOutputUID: String? = nil           // nil = follow system output
 
     static func == (lhs: AudioProcessInfo, rhs: AudioProcessInfo) -> Bool {
         lhs.objectID == rhs.objectID &&
@@ -23,6 +25,8 @@ struct AudioProcessInfo: Identifiable, Equatable {
         lhs.isMuted == rhs.isMuted &&
         lhs.eqEnabled == rhs.eqEnabled &&
         lhs.eqBands == rhs.eqBands &&
+        lhs.outputDeviceID == rhs.outputDeviceID &&
+        lhs.explicitOutputUID == rhs.explicitOutputUID &&
         lhs.name == rhs.name
     }
 }

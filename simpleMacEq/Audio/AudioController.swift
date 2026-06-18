@@ -25,14 +25,15 @@ enum AudioControllerError: LocalizedError {
 /// Owns the audio graph and the lifecycle of per-process taps.
 ///
 /// Each audio-producing app is muted at the OS level and re-rendered through its own
-/// gain node, summed into a global 10-band EQ, then the master mixer, then routed to the
-/// selected output device:
+/// per-app EQ + gain node, summed into a global 10-band EQ, then routed to that app's
+/// chosen output device. Apps can be routed to *different* output devices simultaneously
+/// (like SoundSource), so we keep **one AVAudioEngine per output device in use** and the
+/// global EQ settings are mirrored onto every engine:
 ///
-///   app tap → ring buffer → sourceNode → appMixer(gain) ─┐
-///                                                          ├─▶ eqInputMixer → eq → mainMixer → output
-///   app tap → ring buffer → sourceNode → appMixer(gain) ─┘
-///
-/// The graph is rebuilt whenever the set of tapped apps or the output device changes.
+///   app tap → sourceNode → appEQ(+boost) → appMixer(vol) ─┐
+///                                                           ├▶ eqInputMixer → eq → mainMixer → device A
+///   app tap → sourceNode → appEQ(+boost) → appMixer(vol) ─┘
+///   app tap → sourceNode → appEQ(+boost) → appMixer(vol) ──▶ eqInputMixer → eq → mainMixer → device B
 @MainActor
 final class AudioController: ObservableObject {
     @Published private(set) var status: String = "Idle"
@@ -42,9 +43,19 @@ final class AudioController: ObservableObject {
     /// Apps currently being tapped, shown in the per-app mixer.
     @Published private(set) var apps: [AudioProcessInfo] = []
 
-    private var engine = AVAudioEngine()
-    private var eq = AVAudioUnitEQ(numberOfBands: 10)
-    private var eqInputMixer = AVAudioMixerNode()
+    /// One engine per output device that at least one app is routed to.
+    private final class DeviceEngine {
+        let deviceID: AudioDeviceID
+        let deviceName: String
+        let engine = AVAudioEngine()
+        let eq = AVAudioUnitEQ(numberOfBands: 10)
+        let eqInputMixer = AVAudioMixerNode()
+        init(deviceID: AudioDeviceID, deviceName: String) {
+            self.deviceID = deviceID; self.deviceName = deviceName
+        }
+    }
+    private var engines: [AudioDeviceID: DeviceEngine] = [:]
+    private var engineLevels: [AudioDeviceID: (inLvl: Float, outLvl: Float)] = [:]
 
     /// One live capture + render path per tapped process, keyed by Core Audio object ID.
     private final class TapNode {
@@ -60,15 +71,19 @@ final class AudioController: ObservableObject {
         var isMuted: Bool
         var eqEnabled: Bool
         var eqBands: [Double]       // 10 gains, dB
+        var deviceID: AudioDeviceID         // output device / engine this tap is attached to
+        var explicitDeviceUID: String?      // nil = follow the system output device
         init(info: AudioProcessMonitor.AudioProcessRef, tap: ProcessTap,
              source: AVAudioSourceNode, renderFormat: AVAudioFormat,
              scratch: UnsafeMutablePointer<Float>, scratchCount: Int,
-             volume: Double, isMuted: Bool, eqEnabled: Bool, eqBands: [Double]) {
+             volume: Double, isMuted: Bool, eqEnabled: Bool, eqBands: [Double],
+             deviceID: AudioDeviceID, explicitDeviceUID: String?) {
             self.info = info; self.tap = tap; self.source = source
             self.renderFormat = renderFormat
             self.scratch = scratch; self.scratchCount = scratchCount
             self.volume = volume; self.isMuted = isMuted
             self.eqEnabled = eqEnabled; self.eqBands = eqBands
+            self.deviceID = deviceID; self.explicitDeviceUID = explicitDeviceUID
         }
         deinit { scratch.deallocate() }
     }
@@ -100,11 +115,75 @@ final class AudioController: ObservableObject {
         }
     }
 
+    // MARK: - Device resolution
+
+    private func mainDevice() -> AudioOutputDevice? {
+        guard let outputs else { return nil }
+        return outputs.devices.first(where: { $0.id == outputs.selectedDeviceID })
+            ?? outputs.devices.first
+    }
+
+    /// Resolve an app's effective output device: its explicit choice if that device exists,
+    /// otherwise the system output device.
+    private func resolveDevice(explicitUID: String?) -> AudioOutputDevice? {
+        if let uid = explicitUID, !uid.isEmpty,
+           let device = outputs?.devices.first(where: { $0.uid == uid }) {
+            return device
+        }
+        return mainDevice()
+    }
+
+    // MARK: - Engine management
+
+    /// Get (or create + start) the engine routed to a device.
+    private func engine(for device: AudioOutputDevice) -> DeviceEngine? {
+        if let existing = engines[device.id] { return existing }
+
+        let de = DeviceEngine(deviceID: device.id, deviceName: device.name)
+        guard let outputUnit = de.engine.outputNode.audioUnit else {
+            status = AudioControllerError.noOutputUnit.localizedDescription; return nil
+        }
+        var dev = device.id
+        let setErr = AudioUnitSetProperty(
+            outputUnit, kAudioOutputUnitProperty_CurrentDevice,
+            kAudioUnitScope_Global, 0, &dev, UInt32(MemoryLayout<AudioDeviceID>.size))
+        guard setErr == noErr else {
+            status = AudioControllerError.setDevice(setErr).localizedDescription; return nil
+        }
+
+        de.engine.attach(de.eqInputMixer)
+        de.engine.attach(de.eq)
+        de.engine.connect(de.eqInputMixer, to: de.eq, format: nil)
+        de.engine.connect(de.eq, to: de.engine.mainMixerNode, format: nil)
+        configureEQUnit(de.eq, with: state?.bands ?? Band.defaultBands())
+        de.engine.mainMixerNode.outputVolume = 1.0          // master = hardware device volume
+        de.eq.bypass = !(state?.eqEnabled ?? true)
+
+        de.engine.prepare()
+        do {
+            try de.engine.start()
+        } catch {
+            status = "Error: \(error.localizedDescription)"
+            return nil
+        }
+        installMeters(on: de)
+        engines[device.id] = de
+        return de
+    }
+
+    /// Stop and drop a device's engine once no tap routes to it anymore.
+    private func destroyEngineIfEmpty(_ deviceID: AudioDeviceID) {
+        guard let de = engines[deviceID] else { return }
+        guard !taps.values.contains(where: { $0.deviceID == deviceID }) else { return }
+        if de.engine.isRunning { de.engine.stop() }
+        engines[deviceID] = nil
+        engineLevels[deviceID] = nil
+    }
+
     // MARK: - Tap lifecycle
 
     /// Reconcile live taps with the given process list. Adds/removes are applied
-    /// *incrementally* on the running engine so a transient sound (e.g. a notification
-    /// starting/stopping a process) never stops the whole graph and glitches other apps.
+    /// *incrementally* so a transient sound (e.g. a notification) never disturbs other apps.
     ///
     /// The list is passed in explicitly: @Published delivers its value to subscribers in
     /// `willSet`, so re-reading `monitor.processes` here would return the *previous* value.
@@ -112,62 +191,45 @@ final class AudioController: ObservableObject {
         guard #available(macOS 14.4, *) else {
             status = AudioControllerError.unsupportedOS.localizedDescription; return
         }
-        guard let outputs else { return }
-        guard let device = outputs.devices.first(where: { $0.id == outputs.selectedDeviceID })
-            ?? outputs.devices.first else {
+        guard let main = mainDevice() else {
             status = AudioControllerError.noOutputDevice.localizedDescription; return
         }
-        if outputs.selectedDeviceID != device.id { outputs.selectedDeviceID = device.id }
+        if outputs?.selectedDeviceID != main.id { outputs?.selectedDeviceID = main.id }
 
         let wantedIDs = Set(wanted.map(\.objectID))
 
-        // Remove taps whose process stopped producing audio — detach just those nodes
-        // from the live engine instead of stopping it.
+        // Remove taps whose process stopped producing audio.
         for (id, node) in taps where !wantedIDs.contains(id) {
-            if engine.isRunning { detachTap(node) }
+            detachTap(node)
             node.tap.stop()
+            let dev = node.deviceID
             taps[id] = nil
+            destroyEngineIfEmpty(dev)
         }
 
-        // Create taps for newly-playing apps.
-        var added: [TapNode] = []
+        // Add taps for newly-playing apps, each on its resolved output device.
         for ref in wanted where taps[ref.objectID] == nil {
-            if let node = makeTapNode(ref, clockDeviceUID: device.uid) {
-                taps[ref.objectID] = node
-                added.append(node)
-            }
+            let explicit = state?.appOutputDeviceUID(for: ref.bundleID)
+            guard let device = resolveDevice(explicitUID: explicit),
+                  let node = makeTapNode(ref, device: device, explicitUID: explicit),
+                  let de = engine(for: device) else { continue }
+            taps[ref.objectID] = node
+            connectTap(node, into: de)
         }
 
-        if taps.isEmpty {
-            // Nothing tapped: untapped apps play natively. No engine needed.
-            if engine.isRunning { engine.stop() }
-            isRunning = false
-            inputLevel = 0; outputLevel = 0
-            status = "Idle — no apps playing"
-            publishApps()
-            return
-        }
-
-        if engine.isRunning {
-            // Attach only the new taps to the live graph — no global stop/start.
-            for node in added { connectTap(node) }
-            status = "Running — \(taps.count) app\(taps.count == 1 ? "" : "s") • \(device.name)"
-        } else {
-            // Cold start (first tap, or after a device change): full build + start.
-            buildAndStartEngine(outputDeviceID: device.id, deviceName: device.name)
-        }
+        updateRunningState()
         publishApps()
     }
 
-    /// Create a tap (capture path) and its render nodes for one process. Does not touch
-    /// the engine graph.
+    /// Create a tap (capture path) and its render nodes for one process on `device`.
     @available(macOS 14.4, *)
     private func makeTapNode(_ ref: AudioProcessMonitor.AudioProcessRef,
-                             clockDeviceUID: String) -> TapNode? {
+                             device: AudioOutputDevice,
+                             explicitUID: String?) -> TapNode? {
         let tap = ProcessTap()
         do {
             try tap.start(processes: [ref.objectID],
-                          clockDeviceUID: clockDeviceUID,
+                          clockDeviceUID: device.uid,
                           uidSuffix: "\(ref.objectID)")
         } catch {
             status = "Error: \(error.localizedDescription)"
@@ -192,7 +254,6 @@ final class AudioController: ObservableObject {
             let n = min(frames, maxFrames)
             ring.read(into: scratch, count: n * channels)
             let abl = UnsafeMutableAudioBufferListPointer(ablPtr)
-            // Deinterleave scratch → planar channel buffers.
             for (c, buffer) in abl.enumerated() where c < channels {
                 guard let out = buffer.mData?.assumingMemoryBound(to: Float.self) else { continue }
                 for f in 0..<n { out[f] = scratch[f * channels + c] }
@@ -208,33 +269,50 @@ final class AudioController: ObservableObject {
                        renderFormat: renderFormat,
                        scratch: scratch, scratchCount: maxFrames * channels,
                        volume: savedVol, isMuted: savedMute,
-                       eqEnabled: savedEQOn, eqBands: savedEQ)
+                       eqEnabled: savedEQOn, eqBands: savedEQ,
+                       deviceID: device.id, explicitDeviceUID: explicitUID)
     }
 
-    /// Attach one tap's nodes to the current engine and wire them up. Works on a running
-    /// engine (incremental add) or while building cold.
-    private func connectTap(_ node: TapNode) {
-        engine.attach(node.source)
-        engine.attach(node.appEQ)
-        engine.attach(node.mixer)
-        engine.connect(node.source, to: node.appEQ, format: node.renderFormat)
-        engine.connect(node.appEQ, to: node.mixer, format: node.renderFormat)
-        // When the per-app EQ is on, route straight to master so the global EQ is
-        // bypassed for this app; otherwise feed it through the global EQ.
-        let destination: AVAudioNode = node.eqEnabled ? engine.mainMixerNode : eqInputMixer
-        engine.connect(node.mixer, to: destination, format: node.renderFormat)
+    /// Attach one tap's nodes into a device engine and wire them up.
+    private func connectTap(_ node: TapNode, into de: DeviceEngine) {
+        node.deviceID = de.deviceID
+        de.engine.attach(node.source)
+        de.engine.attach(node.appEQ)
+        de.engine.attach(node.mixer)
+        de.engine.connect(node.source, to: node.appEQ, format: node.renderFormat)
+        de.engine.connect(node.appEQ, to: node.mixer, format: node.renderFormat)
+        // Per-app EQ on → route straight to master (bypass the global EQ for this app);
+        // otherwise feed it through the global EQ.
+        let destination: AVAudioNode = node.eqEnabled ? de.engine.mainMixerNode : de.eqInputMixer
+        de.engine.connect(node.mixer, to: destination, format: node.renderFormat)
         configureAppEQ(node)
         applyAppGain(node)
     }
 
-    /// Detach one tap's nodes from the running engine without disturbing the others.
+    /// Detach one tap's nodes from its current device engine without disturbing others.
     private func detachTap(_ node: TapNode) {
-        engine.disconnectNodeOutput(node.mixer)
-        engine.disconnectNodeOutput(node.appEQ)
-        engine.disconnectNodeOutput(node.source)
-        engine.detach(node.source)
-        engine.detach(node.appEQ)
-        engine.detach(node.mixer)
+        guard let de = engines[node.deviceID] else { return }
+        de.engine.disconnectNodeOutput(node.mixer)
+        de.engine.disconnectNodeOutput(node.appEQ)
+        de.engine.disconnectNodeOutput(node.source)
+        de.engine.detach(node.source)
+        de.engine.detach(node.appEQ)
+        de.engine.detach(node.mixer)
+    }
+
+    private func updateRunningState() {
+        if taps.isEmpty {
+            isRunning = false
+            inputLevel = 0; outputLevel = 0
+            status = "Idle — no apps playing"
+            return
+        }
+        isRunning = engines.values.contains { $0.engine.isRunning }
+        let deviceCount = Set(taps.values.map(\.deviceID)).count
+        let appWord = taps.count == 1 ? "app" : "apps"
+        status = deviceCount <= 1
+            ? "Running — \(taps.count) \(appWord) • \(mainDevice()?.name ?? "")"
+            : "Running — \(taps.count) \(appWord) • \(deviceCount) outputs"
     }
 
     private func publishApps() {
@@ -244,76 +322,34 @@ final class AudioController: ObservableObject {
                                  bundleID: node.info.bundleID, name: node.info.name,
                                  symbol: "speaker.wave.2.fill", icon: node.info.icon,
                                  volume: node.volume, isMuted: node.isMuted,
-                                 eqEnabled: node.eqEnabled, eqBands: node.eqBands)
+                                 eqEnabled: node.eqEnabled, eqBands: node.eqBands,
+                                 outputDeviceID: node.deviceID,
+                                 explicitOutputUID: node.explicitDeviceUID)
             }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
-    // MARK: - Engine graph
+    // MARK: - Metering
 
-    /// Build a fresh engine on the given device and connect every current tap, then start.
-    /// Used for a cold start (first tap) and after a device change — a fresh engine is
-    /// required because the output unit only accepts a new CurrentDevice while uninitialized.
-    private func buildAndStartEngine(outputDeviceID: AudioDeviceID, deviceName: String) {
-        if engine.isRunning { engine.stop() }
-
-        guard !taps.isEmpty else {
-            isRunning = false
-            inputLevel = 0; outputLevel = 0
-            status = "Idle — no apps playing"
-            return
+    private func installMeters(on de: DeviceEngine) {
+        let id = de.deviceID
+        de.eqInputMixer.installTap(onBus: 0, bufferSize: 1024, format: nil) { [weak self] buf, _ in
+            let rms = Self.rms(buf)
+            Task { @MainActor in self?.updateLevel(deviceID: id, input: rms) }
         }
-
-        // Fresh engine + nodes so the output unit is uninitialized and accepts the device.
-        engine = AVAudioEngine()
-        eq = AVAudioUnitEQ(numberOfBands: 10)
-        eqInputMixer = AVAudioMixerNode()
-        configureEQUnit(with: state?.bands ?? Band.defaultBands())
-
-        guard let outputUnit = engine.outputNode.audioUnit else {
-            status = AudioControllerError.noOutputUnit.localizedDescription; return
-        }
-        var dev = outputDeviceID
-        let setErr = AudioUnitSetProperty(
-            outputUnit, kAudioOutputUnitProperty_CurrentDevice,
-            kAudioUnitScope_Global, 0, &dev, UInt32(MemoryLayout<AudioDeviceID>.size))
-        guard setErr == noErr else {
-            status = AudioControllerError.setDevice(setErr).localizedDescription; return
-        }
-
-        engine.attach(eqInputMixer)
-        engine.attach(eq)
-        engine.connect(eqInputMixer, to: eq, format: nil)
-        engine.connect(eq, to: engine.mainMixerNode, format: nil)
-
-        for node in taps.values { connectTap(node) }
-
-        // Master volume is the hardware device volume (OutputDeviceManager), so the
-        // engine's own master stays at unity.
-        engine.mainMixerNode.outputVolume = 1.0
-        eq.bypass = !(state?.eqEnabled ?? true)
-
-        engine.prepare()
-        do {
-            try engine.start()
-            isRunning = true
-            status = "Running — \(taps.count) app\(taps.count == 1 ? "" : "s") • \(deviceName)"
-            installMeters()
-        } catch {
-            isRunning = false
-            status = "Error: \(error.localizedDescription)"
+        de.engine.mainMixerNode.installTap(onBus: 0, bufferSize: 1024, format: nil) { [weak self] buf, _ in
+            let rms = Self.rms(buf)
+            Task { @MainActor in self?.updateLevel(deviceID: id, output: rms) }
         }
     }
 
-    private func installMeters() {
-        eqInputMixer.installTap(onBus: 0, bufferSize: 1024, format: nil) { [weak self] buf, _ in
-            let rms = Self.rms(buf)
-            Task { @MainActor in self?.inputLevel = rms }
-        }
-        engine.mainMixerNode.installTap(onBus: 0, bufferSize: 1024, format: nil) { [weak self] buf, _ in
-            let rms = Self.rms(buf)
-            Task { @MainActor in self?.outputLevel = rms }
-        }
+    private func updateLevel(deviceID: AudioDeviceID, input: Float? = nil, output: Float? = nil) {
+        var entry = engineLevels[deviceID] ?? (0, 0)
+        if let input { entry.inLvl = input }
+        if let output { entry.outLvl = output }
+        engineLevels[deviceID] = entry
+        inputLevel = engineLevels.values.map(\.inLvl).max() ?? 0
+        outputLevel = engineLevels.values.map(\.outLvl).max() ?? 0
     }
 
     private static func rms(_ buffer: AVAudioPCMBuffer) -> Float {
@@ -325,7 +361,9 @@ final class AudioController: ObservableObject {
         return (sum / Float(n)).squareRoot()
     }
 
-    private func configureEQUnit(with bands: [Band]) {
+    // MARK: - Global EQ
+
+    private func configureEQUnit(_ eq: AVAudioUnitEQ, with bands: [Band]) {
         eq.globalGain = 0
         for (i, band) in bands.enumerated() where i < eq.bands.count {
             let p = eq.bands[i]
@@ -338,13 +376,21 @@ final class AudioController: ObservableObject {
     }
 
     private func applyBands(_ bands: [Band]) {
-        for (i, band) in bands.enumerated() where i < eq.bands.count {
-            eq.bands[i].gain = Float(band.gain)
+        for de in engines.values {
+            for (i, band) in bands.enumerated() where i < de.eq.bands.count {
+                de.eq.bands[i].gain = Float(band.gain)
+            }
         }
     }
 
-    /// Configure a tap's per-app EQ. The node is never bypassed (so the boost in
-    /// `globalGain` always applies); when the per-app EQ is off the bands go flat.
+    private func applyGlobalBypass(_ enabled: Bool) {
+        for de in engines.values { de.eq.bypass = !enabled }
+    }
+
+    // MARK: - Per-app EQ + gain helpers
+
+    /// Configure a tap's per-app EQ. Never bypassed (so the boost in `globalGain` always
+    /// applies); when the per-app EQ is off the bands go flat.
     private func configureAppEQ(_ node: TapNode) {
         node.appEQ.bypass = false
         let gains = node.eqEnabled ? node.eqBands : Array(repeating: 0.0, count: 10)
@@ -369,7 +415,6 @@ final class AudioController: ObservableObject {
         node.appEQ.globalGain = v > 1.0 ? Float(20 * log10(v)) : 0
     }
 
-    /// Boost setting changed: clamp any app above the new max back down and persist.
     private func applyBoostSetting() {
         let cap = maxVolume
         for node in taps.values where node.volume > cap {
@@ -402,12 +447,11 @@ final class AudioController: ObservableObject {
         guard let node = taps[id] else { return }
         node.eqEnabled = enabled
         state?.setAppEQEnabled(enabled, for: node.info.bundleID)
-        // Re-point only this app's mixer to its new destination (global EQ in/out of its
-        // path); other apps are untouched, so no global rebuild and no glitch on them.
-        if engine.isRunning {
-            engine.disconnectNodeOutput(node.mixer)
-            let destination: AVAudioNode = node.eqEnabled ? engine.mainMixerNode : eqInputMixer
-            engine.connect(node.mixer, to: destination, format: node.renderFormat)
+        // Re-point only this app's mixer to its new destination within its own engine.
+        if let de = engines[node.deviceID] {
+            de.engine.disconnectNodeOutput(node.mixer)
+            let destination: AVAudioNode = node.eqEnabled ? de.engine.mainMixerNode : de.eqInputMixer
+            de.engine.connect(node.mixer, to: destination, format: node.renderFormat)
             configureAppEQ(node)
         }
         publishApps()
@@ -431,7 +475,6 @@ final class AudioController: ObservableObject {
         publishApps()
     }
 
-    /// Apply a preset's gains to one app's EQ, enabling the per-app EQ if needed.
     func applyAppEQPreset(_ gains: [Double], forObjectID id: AudioObjectID) {
         guard let node = taps[id], gains.count == 10 else { return }
         node.eqBands = gains
@@ -440,19 +483,63 @@ final class AudioController: ObservableObject {
             configureAppEQ(node)
             publishApps()
         } else {
-            // Enabling reconfigures the EQ (using the gains just set) and rebuilds routing.
             setAppEQEnabled(true, forObjectID: id)
         }
+    }
+
+    /// Route an app to a specific output device (`uid`), or nil to follow the system output.
+    /// Rehomes the tap to the matching engine; its capture clock is recreated for the new
+    /// device to avoid drift.
+    func setAppOutputDevice(_ uid: String?, forObjectID id: AudioObjectID) {
+        guard #available(macOS 14.4, *), let node = taps[id] else { return }
+        state?.setAppOutputDeviceUID(uid, for: node.info.bundleID)
+        node.explicitDeviceUID = uid
+
+        guard let device = resolveDevice(explicitUID: uid) else { publishApps(); return }
+        if device.id == node.deviceID { publishApps(); return }   // already there
+
+        let oldDeviceID = node.deviceID
+        detachTap(node)
+        node.tap.stop()
+
+        // Recreate the capture+render path clocked to the new device, then attach.
+        guard let newNode = makeTapNode(node.info, device: device, explicitUID: uid),
+              let de = engine(for: device) else {
+            taps[id] = nil
+            destroyEngineIfEmpty(oldDeviceID)
+            updateRunningState(); publishApps()
+            return
+        }
+        taps[id] = newNode          // replaces & deallocates the old node (frees its scratch)
+        connectTap(newNode, into: de)
+        destroyEngineIfEmpty(oldDeviceID)
+        updateRunningState()
+        publishApps()
     }
 
     // MARK: - Lifecycle
 
     func teardown() {
-        if engine.isRunning { engine.stop() }
+        for de in engines.values where de.engine.isRunning { de.engine.stop() }
+        engines.removeAll()
+        engineLevels.removeAll()
         for node in taps.values { node.tap.stop() }
         taps.removeAll()
         isRunning = false
         if status.hasPrefix("Running") { status = "Stopped" }
+    }
+
+    /// Tear down every engine and tap, then re-sync from scratch. Used when the system
+    /// output device or the device list changes (apps following the system output move;
+    /// explicitly-routed apps re-resolve, falling back to the system output if their
+    /// device disappeared).
+    private func rebuildEverything() {
+        for de in engines.values where de.engine.isRunning { de.engine.stop() }
+        engines.removeAll()
+        engineLevels.removeAll()
+        for node in taps.values { node.tap.stop() }
+        taps.removeAll()
+        syncTaps(with: monitor?.processes ?? [])
     }
 
     // MARK: - Bindings
@@ -465,7 +552,7 @@ final class AudioController: ObservableObject {
             .store(in: &cancellables)
 
         state.$eqEnabled
-            .sink { [weak self] on in self?.eq.bypass = !on }
+            .sink { [weak self] on in self?.applyGlobalBypass(on) }
             .store(in: &cancellables)
 
         state.$volumeBoostEnabled
@@ -474,31 +561,26 @@ final class AudioController: ObservableObject {
             .sink { [weak self] _ in self?.applyBoostSetting() }
             .store(in: &cancellables)
 
-        // Process list changes → add/remove taps and rebuild. Use the value Combine
+        // Process list changes → add/remove taps incrementally. Use the value Combine
         // delivers (the new list); reading monitor.processes here would see the old one.
         monitor.$processes
             .removeDuplicates()
             .sink { [weak self] procs in self?.syncTaps(with: procs) }
             .store(in: &cancellables)
 
-        // Output device change → rebuild taps (clock device) and graph.
+        // System output device changed → re-resolve routes and rebuild.
         outputs.$selectedDeviceID
             .dropFirst()
             .removeDuplicates()
-            .sink { [weak self] _ in self?.restartAllTaps() }
+            .sink { [weak self] _ in self?.rebuildEverything() }
             .store(in: &cancellables)
-    }
 
-    /// Output device changed: tear down all taps (their aggregate clocks point at the old
-    /// device) and re-create them against the new one.
-    private func restartAllTaps() {
-        // Full teardown: the new device needs a fresh engine (output unit must be
-        // uninitialized to accept the device), and every tap's aggregate clock points at
-        // the old device. Stopping the engine first makes clearing the taps safe.
-        if engine.isRunning { engine.stop() }
-        for node in taps.values { node.tap.stop() }
-        taps.removeAll()
-        // Not inside a @Published willSet here, so monitor.processes is current.
-        syncTaps(with: monitor?.processes ?? [])
+        // Device list changed (hot-plug/unplug) → re-resolve routes (a removed device an
+        // app was pinned to falls back to the system output).
+        outputs.$devices
+            .dropFirst()
+            .removeDuplicates()
+            .sink { [weak self] _ in self?.rebuildEverything() }
+            .store(in: &cancellables)
     }
 }
