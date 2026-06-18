@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct MacEqualizerApp: App {
+struct SimpleMacEqApp: App {
     @StateObject private var state = AppState()
     @StateObject private var outputs = OutputDeviceManager()
     @StateObject private var monitor = AudioProcessMonitor()

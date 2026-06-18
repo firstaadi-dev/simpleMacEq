@@ -15,7 +15,7 @@ struct AppSettings: Codable, Equatable {
     var volumeBoostEnabled: Bool = false       // allow per-app volume above 100%
     var launchAtLogin: Bool = false
 
-    private static let key = "MacEqualizer.Settings.v1"
+    private static let key = "simpleMacEq.Settings.v1"
 
     static func load() -> AppSettings {
         guard let data = UserDefaults.standard.data(forKey: key),

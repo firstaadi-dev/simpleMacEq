@@ -30,7 +30,7 @@ final class ProcessTap {
     private(set) var ringBuffer: RingBuffer!
 
     /// Stable UID we give our aggregate so launch-time cleanup can find stale ones.
-    static let aggregateUIDPrefix = "com.example.MacEqualizer.capture"
+    static let aggregateUIDPrefix = "com.firstaadi.simpleMacEq.capture"
 
     private var tapID: AudioObjectID = 0
     private var aggregateID: AudioDeviceID = 0
@@ -47,7 +47,7 @@ final class ProcessTap {
         } else {
             desc = CATapDescription(stereoMixdownOfProcesses: processes)
         }
-        desc.name = "MacEqualizer Tap \(uidSuffix)"
+        desc.name = "simpleMacEq Tap \(uidSuffix)"
         desc.isPrivate = true
         desc.muteBehavior = .mutedWhenTapped
 
@@ -72,7 +72,7 @@ final class ProcessTap {
         // 3. Private input-only aggregate containing the tap (clock from output device).
         let tapUID = try Self.tapUID(tap)
         let aggDesc: [String: Any] = [
-            kAudioAggregateDeviceNameKey as String: "MacEqualizer Capture \(uidSuffix)",
+            kAudioAggregateDeviceNameKey as String: "simpleMacEq Capture \(uidSuffix)",
             kAudioAggregateDeviceUIDKey as String: "\(Self.aggregateUIDPrefix).\(uidSuffix)",
             kAudioAggregateDeviceMainSubDeviceKey as String: clockDeviceUID,
             kAudioAggregateDeviceIsPrivateKey as String: true,

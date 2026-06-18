@@ -7,11 +7,11 @@
 	objects = {
 
 /* Begin PBXFileReference section */
-		AA0000000000000000000006 /* MacEqualizer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MacEqualizer.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AA0000000000000000000006 /* simpleMacEq.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = simpleMacEq.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		AA0000000000000000000004 /* MacEqualizer */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = MacEqualizer; sourceTree = "<group>"; };
+		AA0000000000000000000004 /* simpleMacEq */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = simpleMacEq; sourceTree = "<group>"; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -20,22 +20,22 @@
 
 /* Begin PBXGroup section */
 		AA0000000000000000000002 = {isa = PBXGroup; children = (
-			AA0000000000000000000004 /* MacEqualizer */,
+			AA0000000000000000000004 /* simpleMacEq */,
 			AA0000000000000000000003 /* Products */,
 		); sourceTree = "<group>"; };
 		AA0000000000000000000003 /* Products */ = {isa = PBXGroup; children = (
-			AA0000000000000000000006 /* MacEqualizer.app */,
+			AA0000000000000000000006 /* simpleMacEq.app */,
 		); name = Products; sourceTree = "<group>"; };
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		AA0000000000000000000005 /* MacEqualizer */ = {isa = PBXNativeTarget; buildConfigurationList = AA000000000000000000000B /* Build configuration list for PBXNativeTarget "MacEqualizer" */; buildPhases = (
+		AA0000000000000000000005 /* simpleMacEq */ = {isa = PBXNativeTarget; buildConfigurationList = AA000000000000000000000B /* Build configuration list for PBXNativeTarget "simpleMacEq" */; buildPhases = (
 			AA0000000000000000000007 /* Sources */,
 			AA0000000000000000000008 /* Frameworks */,
 			AA0000000000000000000009 /* Resources */,
 		); buildRules = (); dependencies = (); fileSystemSynchronizedGroups = (
-			AA0000000000000000000004 /* MacEqualizer */,
-		); name = MacEqualizer; productName = MacEqualizer; productReference = AA0000000000000000000006 /* MacEqualizer.app */; productType = "com.apple.product-type.application"; };
+			AA0000000000000000000004 /* simpleMacEq */,
+		); name = simpleMacEq; productName = simpleMacEq; productReference = AA0000000000000000000006 /* simpleMacEq.app */; productType = "com.apple.product-type.application"; };
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -46,11 +46,11 @@
 			TargetAttributes = {
 				AA0000000000000000000005 = {CreatedOnToolsVersion = 26.5;};
 			};
-		}; buildConfigurationList = AA000000000000000000000A /* Build configuration list for PBXProject "MacEqualizer" */; compatibilityVersion = "Xcode 16.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (
+		}; buildConfigurationList = AA000000000000000000000A /* Build configuration list for PBXProject "simpleMacEq" */; compatibilityVersion = "Xcode 16.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (
 			en,
 			Base,
 		); mainGroup = AA0000000000000000000002; minimizedProjectReferenceProxies = 1; preferredProjectObjectVersion = 77; productRefGroup = AA0000000000000000000003 /* Products */; projectDirPath = ""; projectRoot = ""; targets = (
-			AA0000000000000000000005 /* MacEqualizer */,
+			AA0000000000000000000005 /* simpleMacEq */,
 		); };
 /* End PBXProject section */
 
@@ -95,7 +95,7 @@
 			SWIFT_OPTIMIZATION_LEVEL = "-O";
 		}; name = Release; };
 		AA000000000000000000000E /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {
-			CODE_SIGN_ENTITLEMENTS = MacEqualizer/MacEqualizer.entitlements;
+			CODE_SIGN_ENTITLEMENTS = simpleMacEq/simpleMacEq.entitlements;
 			CODE_SIGN_IDENTITY = "-";
 			CODE_SIGN_STYLE = Automatic;
 			COMBINE_HIDPI_IMAGES = YES;
@@ -103,20 +103,20 @@
 			ENABLE_HARDENED_RUNTIME = NO;
 			GENERATE_INFOPLIST_FILE = YES;
 			INFOPLIST_FILE = Info.plist;
-			INFOPLIST_KEY_CFBundleDisplayName = "Mac Equalizer";
+			INFOPLIST_KEY_CFBundleDisplayName = "simpleMacEq";
 			INFOPLIST_KEY_LSUIElement = YES;
-			INFOPLIST_KEY_NSAudioCaptureUsageDescription = "Mac Equalizer processes system audio to apply the equalizer and per-app volume.";
+			INFOPLIST_KEY_NSAudioCaptureUsageDescription = "simpleMacEq processes system audio to apply the equalizer and per-app volume.";
 			INFOPLIST_KEY_NSHumanReadableCopyright = "";
-			INFOPLIST_KEY_NSMicrophoneUsageDescription = "Mac Equalizer captures system audio to apply the equalizer.";
+			INFOPLIST_KEY_NSMicrophoneUsageDescription = "simpleMacEq captures system audio to apply the equalizer.";
 			LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/../Frameworks");
 			MARKETING_VERSION = 1.0;
-			PRODUCT_BUNDLE_IDENTIFIER = com.example.MacEqualizer;
+			PRODUCT_BUNDLE_IDENTIFIER = com.firstaadi.simpleMacEq;
 			PRODUCT_NAME = "$(TARGET_NAME)";
 			SWIFT_EMIT_LOC_STRINGS = YES;
 			SWIFT_VERSION = 5.0;
 		}; name = Debug; };
 		AA000000000000000000000F /* Release */ = {isa = XCBuildConfiguration; buildSettings = {
-			CODE_SIGN_ENTITLEMENTS = MacEqualizer/MacEqualizer.entitlements;
+			CODE_SIGN_ENTITLEMENTS = simpleMacEq/simpleMacEq.entitlements;
 			CODE_SIGN_IDENTITY = "-";
 			CODE_SIGN_STYLE = Automatic;
 			COMBINE_HIDPI_IMAGES = YES;
@@ -124,14 +124,14 @@
 			ENABLE_HARDENED_RUNTIME = NO;
 			GENERATE_INFOPLIST_FILE = YES;
 			INFOPLIST_FILE = Info.plist;
-			INFOPLIST_KEY_CFBundleDisplayName = "Mac Equalizer";
+			INFOPLIST_KEY_CFBundleDisplayName = "simpleMacEq";
 			INFOPLIST_KEY_LSUIElement = YES;
-			INFOPLIST_KEY_NSAudioCaptureUsageDescription = "Mac Equalizer processes system audio to apply the equalizer and per-app volume.";
+			INFOPLIST_KEY_NSAudioCaptureUsageDescription = "simpleMacEq processes system audio to apply the equalizer and per-app volume.";
 			INFOPLIST_KEY_NSHumanReadableCopyright = "";
-			INFOPLIST_KEY_NSMicrophoneUsageDescription = "Mac Equalizer captures system audio to apply the equalizer.";
+			INFOPLIST_KEY_NSMicrophoneUsageDescription = "simpleMacEq captures system audio to apply the equalizer.";
 			LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/../Frameworks");
 			MARKETING_VERSION = 1.0;
-			PRODUCT_BUNDLE_IDENTIFIER = com.example.MacEqualizer;
+			PRODUCT_BUNDLE_IDENTIFIER = com.firstaadi.simpleMacEq;
 			PRODUCT_NAME = "$(TARGET_NAME)";
 			SWIFT_EMIT_LOC_STRINGS = YES;
 			SWIFT_VERSION = 5.0;
@@ -139,11 +139,11 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		AA000000000000000000000A /* Build configuration list for PBXProject "MacEqualizer" */ = {isa = XCConfigurationList; buildConfigurations = (
+		AA000000000000000000000A /* Build configuration list for PBXProject "simpleMacEq" */ = {isa = XCConfigurationList; buildConfigurations = (
 			AA000000000000000000000C /* Debug */,
 			AA000000000000000000000D /* Release */,
 		); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-		AA000000000000000000000B /* Build configuration list for PBXNativeTarget "MacEqualizer" */ = {isa = XCConfigurationList; buildConfigurations = (
+		AA000000000000000000000B /* Build configuration list for PBXNativeTarget "simpleMacEq" */ = {isa = XCConfigurationList; buildConfigurations = (
 			AA000000000000000000000E /* Debug */,
 			AA000000000000000000000F /* Release */,
 		); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };

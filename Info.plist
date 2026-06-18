@@ -3,6 +3,6 @@
 <plist version="1.0">
 <dict>
 	<key>NSAudioCaptureUsageDescription</key>
-	<string>Mac Equalizer processes system audio to apply the equalizer and per-app volume.</string>
+	<string>simpleMacEq processes system audio to apply the equalizer and per-app volume.</string>
 </dict>
 </plist>
