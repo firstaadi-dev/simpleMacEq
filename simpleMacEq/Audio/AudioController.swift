@@ -281,12 +281,23 @@ final class AudioController: ObservableObject {
         de.engine.attach(node.mixer)
         de.engine.connect(node.source, to: node.appEQ, format: node.renderFormat)
         de.engine.connect(node.appEQ, to: node.mixer, format: node.renderFormat)
-        // Per-app EQ on → route straight to master (bypass the global EQ for this app);
-        // otherwise feed it through the global EQ.
-        let destination: AVAudioNode = node.eqEnabled ? de.engine.mainMixerNode : de.eqInputMixer
-        de.engine.connect(node.mixer, to: destination, format: node.renderFormat)
+        connectAppMixer(node, into: de)
         configureAppEQ(node)
         applyAppGain(node)
+    }
+
+    private func connectAppMixer(_ node: TapNode, into de: DeviceEngine) {
+        let destination = node.eqEnabled ? de.engine.mainMixerNode : de.eqInputMixer
+        // Reserve main mixer bus 0 for the global EQ, even while its branch is empty.
+        var bus: AVAudioNodeBus = node.eqEnabled ? 1 : 0
+        while bus < destination.numberOfInputs && de.engine.inputConnectionPoint(for: destination, inputBus: bus) != nil {
+            bus += 1
+        }
+        de.engine.connect(node.mixer, to: destination, fromBus: 0, toBus: bus, format: node.renderFormat)
+        if !node.eqEnabled {
+            // An empty global branch can lose its output connection; restore it before use.
+            de.engine.connect(de.eq, to: de.engine.mainMixerNode, fromBus: 0, toBus: 0, format: nil)
+        }
     }
 
     /// Detach one tap's nodes from its current device engine without disturbing others.
@@ -450,8 +461,7 @@ final class AudioController: ObservableObject {
         // Re-point only this app's mixer to its new destination within its own engine.
         if let de = engines[node.deviceID] {
             de.engine.disconnectNodeOutput(node.mixer)
-            let destination: AVAudioNode = node.eqEnabled ? de.engine.mainMixerNode : de.eqInputMixer
-            de.engine.connect(node.mixer, to: destination, format: node.renderFormat)
+            connectAppMixer(node, into: de)
             configureAppEQ(node)
         }
         publishApps()

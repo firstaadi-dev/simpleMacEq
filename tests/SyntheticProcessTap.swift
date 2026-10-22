@@ -21,10 +21,14 @@ final class ProcessTap {
         format = AVAudioFormat(commonFormat: .pcmFormatFloat32,
                                sampleRate: Self.sampleRate, channels: 2, interleaved: true)!
         ringBuffer = RingBuffer(capacityFrames: 32768, channels: 2)
-        let samples = [Float](repeating: 0.125, count: 32768 * 2)
-        samples.withUnsafeBufferPointer { ringBuffer.write($0.baseAddress!, count: $0.count) }
+        fillBuffer()
         Self.starts += 1
         started = true
+    }
+
+    func fillBuffer() {
+        let samples = [Float](repeating: 0.125, count: 32768 * 2)
+        samples.withUnsafeBufferPointer { ringBuffer.write($0.baseAddress!, count: $0.count) }
     }
 
     func stop() {
