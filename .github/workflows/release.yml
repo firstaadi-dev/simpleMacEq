@@ -41,7 +41,8 @@ jobs:
       - name: Package and verify DMG
         run: |
           app=build/DerivedData/Build/Products/Release/simpleMacEq.app
-          lipo -verify_arch arm64 x86_64 "$app/Contents/MacOS/simpleMacEq"
+          lipo "$app/Contents/MacOS/simpleMacEq" -verify_arch arm64
+          lipo "$app/Contents/MacOS/simpleMacEq" -verify_arch x86_64
           codesign --verify --deep --strict "$app"
           mkdir -p build/dmg
           ditto "$app" build/dmg/simpleMacEq.app
