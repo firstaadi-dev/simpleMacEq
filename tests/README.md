@@ -17,6 +17,9 @@ Covered automatically:
 - Selecting an output reads that device's hardware volume (when readable).
 - Ring overflow preserves whole frames and channel order; reads zero-pad underruns.
   Repeated wraparound is checked for mono, stereo, and six channels.
+- Toggling App EQ on a running graph keeps audio audible, follows master EQ when
+  disabled, and bypasses it when enabled. Master bypass preserves audio, and two
+  apps retain separate mixer inputs through startup and mode changes.
 - A real `AVAudioEngine` renders nonzero, finite PCM after repeated 48 kHz/stereo ↔
   16 kHz/mono rebuilds, through both global EQ and per-app EQ. The test supplies
   in-memory capture samples and offline destinations; lifecycle, source creation,
