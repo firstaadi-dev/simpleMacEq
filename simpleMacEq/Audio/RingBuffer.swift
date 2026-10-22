@@ -9,6 +9,7 @@ final class RingBuffer {
     private let capacity: Int          // total floats
     private var readIndex = 0
     private var writeIndex = 0
+    private var available = 0
     private var lock = os_unfair_lock_s()
 
     init(capacityFrames: Int, channels: Int) {
@@ -25,9 +26,13 @@ final class RingBuffer {
         var w = writeIndex
         var r = readIndex
         for i in 0..<count {
+            if available == capacity {
+                r += 1; if r == capacity { r = 0 }
+            } else {
+                available += 1
+            }
             storage[w] = src[i]
             w += 1; if w == capacity { w = 0 }
-            if w == r { r += 1; if r == capacity { r = 0 } }   // drop oldest
         }
         writeIndex = w
         readIndex = r
@@ -40,11 +45,11 @@ final class RingBuffer {
         os_unfair_lock_lock(&lock)
         var rd = 0
         var r = readIndex
-        let w = writeIndex
-        while rd < count && r != w {
+        while rd < count && available > 0 {
             dst[rd] = storage[r]
             r += 1; if r == capacity { r = 0 }
             rd += 1
+            available -= 1
         }
         readIndex = r
         os_unfair_lock_unlock(&lock)
