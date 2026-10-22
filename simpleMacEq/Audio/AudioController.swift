@@ -108,11 +108,9 @@ final class AudioController: ObservableObject {
         monitor.start()
         bind()   // subscribing to monitor.$processes fires syncTaps() with the current list
 
-        NotificationCenter.default.addObserver(
-            forName: NSApplication.willTerminateNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.teardown() }
-        }
+        NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)
+            .sink { [weak self] _ in self?.teardown() }
+            .store(in: &cancellables)
     }
 
     // MARK: - Device resolution
@@ -208,16 +206,18 @@ final class AudioController: ObservableObject {
         }
 
         // Add taps for newly-playing apps, each on its resolved output device.
+        var failure: String?
         for ref in wanted where taps[ref.objectID] == nil {
             let explicit = state?.appOutputDeviceUID(for: ref.bundleID)
             guard let device = resolveDevice(explicitUID: explicit),
                   let node = makeTapNode(ref, device: device, explicitUID: explicit),
-                  let de = engine(for: device) else { continue }
+                  let de = engine(for: device) else { failure = status; continue }
             taps[ref.objectID] = node
             connectTap(node, into: de)
         }
 
         updateRunningState()
+        if let failure { status = failure }
         publishApps()
     }
 
@@ -520,6 +520,11 @@ final class AudioController: ObservableObject {
     // MARK: - Lifecycle
 
     func teardown() {
+        cancellables.removeAll()
+        stopAudio()
+    }
+
+    private func stopAudio() {
         for de in engines.values where de.engine.isRunning { de.engine.stop() }
         engines.removeAll()
         engineLevels.removeAll()
@@ -533,10 +538,19 @@ final class AudioController: ObservableObject {
     /// output device or the device list changes (apps following the system output move;
     /// explicitly-routed apps re-resolve, falling back to the system output if their
     /// device disappeared).
-    // ponytail: rebuildEverything reuses teardown() instead of duplicating it
     private func rebuildEverything() {
-        teardown()
+        stopAudio()
         syncTaps(with: monitor?.processes ?? [])
+    }
+
+    private func recoverIfNeeded() {
+        if engines.values.contains(where: { !$0.engine.isRunning }) {
+            rebuildEverything()
+        } else if let wanted = monitor?.processes,
+                  Set(wanted.map(\.objectID)) != Set(taps.keys) {
+            // A device can reject setup while Bluetooth is changing profiles.
+            syncTaps(with: wanted)
+        }
     }
 
     // MARK: - Bindings
@@ -565,19 +579,29 @@ final class AudioController: ObservableObject {
             .sink { [weak self] procs in self?.syncTaps(with: procs) }
             .store(in: &cancellables)
 
-        // System output device changed → re-resolve routes and rebuild.
-        outputs.$selectedDeviceID
-            .dropFirst()
-            .removeDuplicates()
+        let configurationChanges = NotificationCenter.default
+            .publisher(for: .AVAudioEngineConfigurationChange)
+            // Core Audio posts on an internal queue; tearing down there can deadlock.
+            .receive(on: RunLoop.main)
+            .filter { [weak self] notification in
+                self?.engines.values.contains { $0.engine === notification.object as? AVAudioEngine } == true
+            }
+            .map { _ in () }
+
+        // Bluetooth can change format without changing device ID. Coalesce its events
+        // and let @Published commit output changes before resolving the new routes.
+        Publishers.Merge3(
+            configurationChanges,
+            outputs.$selectedDeviceID.dropFirst().removeDuplicates().map { _ in () },
+            outputs.$devices.dropFirst().removeDuplicates().map { _ in () }
+        )
+            .debounce(for: .milliseconds(250), scheduler: RunLoop.main)
             .sink { [weak self] _ in self?.rebuildEverything() }
             .store(in: &cancellables)
 
-        // Device list changed (hot-plug/unplug) → re-resolve routes (a removed device an
-        // app was pinned to falls back to the system output).
-        outputs.$devices
-            .dropFirst()
-            .removeDuplicates()
-            .sink { [weak self] _ in self?.rebuildEverything() }
+        Timer.publish(every: 1, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in self?.recoverIfNeeded() }
             .store(in: &cancellables)
     }
 }

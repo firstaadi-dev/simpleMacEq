@@ -70,11 +70,11 @@ final class OutputDeviceManager: ObservableObject {
     private func onSelectedDeviceChanged(_ id: AudioDeviceID) {
         installVolumeListener(on: id)
         outputVolumeAvailable = Self.deviceHasVolume(id)
-        syncVolumeFromDevice()
+        syncVolumeFromDevice(id)
     }
 
-    private func syncVolumeFromDevice() {
-        guard let v = Self.deviceVolume(selectedDeviceID) else { return }
+    private func syncVolumeFromDevice(_ id: AudioDeviceID) {
+        guard let v = Self.deviceVolume(id) else { return }
         if abs(Double(v) - outputVolume) > 0.0005 {
             applyingExternalVolume = true
             outputVolume = Double(v)
@@ -93,7 +93,10 @@ final class OutputDeviceManager: ObservableObject {
         guard id != 0 else { volumeListenerBlock = nil; volumeListenedDevice = 0; return }
 
         let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
-            MainActor.assumeIsolated { self?.syncVolumeFromDevice() }
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.syncVolumeFromDevice(self.selectedDeviceID)
+            }
         }
         for element in Self.volumeElements {
             var addr = Self.volumeAddress(element)
