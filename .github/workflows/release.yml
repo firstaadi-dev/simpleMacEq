@@ -1,0 +1,73 @@
+name: Release DMG
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      RELEASE_TAG: build-${{ github.run_number }}.${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Build universal app
+        run: |
+          xcodebuild -project simpleMacEq.xcodeproj \
+            -scheme simpleMacEq \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            -derivedDataPath build/DerivedData \
+            ARCHS='arm64 x86_64' \
+            ONLY_ACTIVE_ARCH=NO \
+            CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY=- \
+            DEVELOPMENT_TEAM= \
+            build
+
+      - name: Package and verify DMG
+        run: |
+          app=build/DerivedData/Build/Products/Release/simpleMacEq.app
+          lipo -verify_arch arm64 x86_64 "$app/Contents/MacOS/simpleMacEq"
+          codesign --verify --deep --strict "$app"
+          mkdir -p build/dmg
+          ditto "$app" build/dmg/simpleMacEq.app
+          ln -s /Applications build/dmg/Applications
+          hdiutil create -volname simpleMacEq \
+            -srcfolder build/dmg -ov -format UDZO \
+            "build/simpleMacEq-${RELEASE_TAG}-universal.dmg"
+          hdiutil verify "build/simpleMacEq-${RELEASE_TAG}-universal.dmg"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # shortcut: ad-hoc signing triggers Gatekeeper; add Developer ID signing and notarization for trusted distribution.
+          cat > build/release-notes.md <<EOF
+          Automated build of commit ${GITHUB_SHA} from main.
+
+          Requires macOS 14.4 or later. Supports Apple Silicon and Intel.
+          Open the DMG and drag simpleMacEq into Applications.
+
+          This app is ad-hoc signed and is not notarized by Apple.
+          macOS Gatekeeper may block it when opened.
+          EOF
+          gh release create "$RELEASE_TAG" \
+            "build/simpleMacEq-${RELEASE_TAG}-universal.dmg" \
+            --target "$GITHUB_SHA" \
+            --title "simpleMacEq ${RELEASE_TAG}" \
+            --notes-file build/release-notes.md
